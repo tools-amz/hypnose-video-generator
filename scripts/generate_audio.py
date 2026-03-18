@@ -7,18 +7,35 @@ import re
 import io
 import wave
 import struct
+import subprocess
+import tempfile
 import numpy as np
 from scipy.io import wavfile
 from elevenlabs import ElevenLabs
 
 
-def _mp3_to_wav_raw(mp3_bytes: bytes) -> np.ndarray:
-    """
-    Konvertiert MP3-Bytes zu WAV numpy array.
-    Nutzt minimp3 über audioop oder direkten Weg über ElevenLabs output_format.
-    """
-    # Wir umgehen MP3 komplett - ElevenLabs kann direkt PCM liefern
-    raise NotImplementedError("Use PCM output format instead")
+def _mp3_bytes_to_numpy(mp3_bytes: bytes, target_sr: int = 44100) -> np.ndarray:
+    """Konvertiert MP3-Bytes zu numpy array via ffmpeg."""
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_mp3:
+        tmp_mp3.write(mp3_bytes)
+        tmp_mp3_path = tmp_mp3.name
+
+    tmp_wav_path = tmp_mp3_path.replace(".mp3", ".wav")
+
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", tmp_mp3_path,
+             "-ar", str(target_sr), "-ac", "1", "-f", "wav", tmp_wav_path],
+            capture_output=True, check=True,
+        )
+        sr, data = wavfile.read(tmp_wav_path)
+        if data.dtype == np.int16:
+            data = data.astype(np.float32) / 32767.0
+        return data
+    finally:
+        for p in [tmp_mp3_path, tmp_wav_path]:
+            if os.path.exists(p):
+                os.unlink(p)
 
 
 def _parse_pauses(script: str) -> list:
@@ -109,12 +126,12 @@ def generate_audio(
 
             print(f"  TTS Segment {i + 1}/{len(segments)}: {text[:60]}...")
 
-            # Audio generieren - PCM Format anfordern
+            # Audio generieren - MP3 Format (Free Tier kompatibel)
             audio_generator = client.text_to_speech.convert(
                 voice_id=voice_id,
                 text=text,
                 model_id=model_id,
-                output_format="pcm_44100",  # Raw PCM 16-bit, 44100 Hz
+                output_format="mp3_44100_128",
                 voice_settings={
                     "stability": stability,
                     "similarity_boost": similarity_boost,
@@ -126,8 +143,8 @@ def generate_audio(
             # Generator zu Bytes
             audio_bytes = b"".join(audio_generator)
 
-            # PCM zu numpy
-            audio_np = _pcm_bytes_to_numpy(audio_bytes, sample_rate)
+            # MP3 zu WAV konvertieren mit ffmpeg
+            audio_np = _mp3_bytes_to_numpy(audio_bytes, sample_rate)
 
             # Geschwindigkeit anpassen durch Resampling
             if speed != 1.0 and len(audio_np) > 0:
