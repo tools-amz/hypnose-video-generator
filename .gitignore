@@ -1,0 +1,10 @@
+.streamlit/secrets.toml
+output/
+__pycache__/
+*.pyc
+*.wav
+*.mp4
+venv/
+.env
+client_secrets.json
+youtube_credentials.json

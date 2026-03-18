@@ -1,0 +1,53 @@
+# === Hypnose Video Automation Konfiguration ===
+
+# API Keys (oder als Umgebungsvariablen setzen)
+api_keys:
+  anthropic: "${ANTHROPIC_API_KEY}"
+  elevenlabs: "${ELEVENLABS_API_KEY}"
+  openai: "${OPENAI_API_KEY}"
+
+# YouTube OAuth2 Credentials Datei
+youtube:
+  client_secrets_file: "client_secrets.json"
+  credentials_file: "youtube_credentials.json"
+  default_category: "26"  # How-to & Style
+  default_privacy: "unlisted"  # public, unlisted, private
+  default_tags:
+    - "Hypnose"
+    - "Meditation"
+    - "432 Hz"
+    - "Heilende Frequenzen"
+    - "Tiefenentspannung"
+    - "Selbsthypnose"
+    - "deutsch"
+
+# TTS Einstellungen
+tts:
+  voice_id: "onwK4e9ZLuTAKqWW03F9"  # ElevenLabs deutsche Stimme (Daniel)
+  model_id: "eleven_multilingual_v2"
+  stability: 0.75
+  similarity_boost: 0.75
+  style: 0.4
+  speed: 0.85  # Langsamer für Hypnose
+
+# Audio Einstellungen
+audio:
+  music_volume: 0.15  # Musik-Lautstärke relativ zur Stimme
+  frequency_hz: 432  # Basis-Frequenz
+  sample_rate: 44100
+  fade_in_seconds: 5
+  fade_out_seconds: 10
+
+# Video Einstellungen
+video:
+  resolution: [1920, 1080]
+  fps: 30
+  visual_style: "spiral"  # spiral, mandala, gradient, particles
+  color_scheme: "purple_blue"  # purple_blue, green_teal, warm_golden
+  loop_duration_seconds: 10  # Länge eines Visual-Loops
+
+# Skript Einstellungen
+script:
+  model: "claude-sonnet-4-20250514"
+  max_tokens: 8000
+  default_duration_minutes: 20
