@@ -36,6 +36,36 @@ def get_audio_duration(wav_path):
         return wf.getnframes() / wf.getframerate()
 
 
+# ── Hypnose-Kategorien ──
+
+KATEGORIEN = {
+    "Morgens-Hypnose": {
+        "thema": "Energievolle Morgen-Hypnose fuer einen kraftvollen Start in den Tag",
+        "icon": "🌅",
+        "beschreibung": "Starte energiegeladen in den Tag",
+        "color_scheme": "warm_golden",
+    },
+    "Mittags-Hypnose": {
+        "thema": "Erfrischende Mittags-Hypnose fuer neue Energie und Fokus",
+        "icon": "☀️",
+        "beschreibung": "Neue Energie fuer den Nachmittag",
+        "color_scheme": "green_teal",
+    },
+    "Abend-Hypnose": {
+        "thema": "Beruhigende Abend-Hypnose zum Loslassen und Entspannen",
+        "icon": "🌙",
+        "beschreibung": "Loslassen und den Tag abschliessen",
+        "color_scheme": "purple_blue",
+    },
+    "Schlaf-Hypnose": {
+        "thema": "Tiefschlaf-Hypnose fuer erholsamen und tiefen Schlaf",
+        "icon": "💤",
+        "beschreibung": "Sanft in den Tiefschlaf gleiten",
+        "color_scheme": "purple_blue",
+    },
+}
+
+
 # ── Seiten-Config ──
 
 st.set_page_config(
@@ -51,30 +81,44 @@ st.title("Hypnose-Video Generator")
 st.caption("KI-generierte Hypnose-Videos mit 432 Hz Frequenzen")
 st.divider()
 
-thema = st.text_input(
-    "Thema",
-    placeholder="z.B. Raucherentwöhnung, Besserer Schlaf, Selbstvertrauen...",
-)
+st.subheader("Waehle deine Hypnose")
 
+# 4 Buttons in 2x2 Grid
 col1, col2 = st.columns(2)
+
+selected = None
+
 with col1:
-    dauer = st.slider("Dauer (Minuten)", min_value=5, max_value=20, value=10, step=5)
+    for name in ["Morgens-Hypnose", "Abend-Hypnose"]:
+        kat = KATEGORIEN[name]
+        if st.button(
+            f"{kat['icon']} {name}",
+            key=name,
+            use_container_width=True,
+            help=kat["beschreibung"],
+        ):
+            selected = name
+
 with col2:
-    farbschema = st.selectbox(
-        "Farbschema",
-        options=["purple_blue", "green_teal", "warm_golden"],
-        format_func=lambda x: {
-            "purple_blue": "Lila / Blau",
-            "green_teal": "Grün / Türkis",
-            "warm_golden": "Gold / Amber",
-        }[x],
-    )
+    for name in ["Mittags-Hypnose", "Schlaf-Hypnose"]:
+        kat = KATEGORIEN[name]
+        if st.button(
+            f"{kat['icon']} {name}",
+            key=name,
+            use_container_width=True,
+            help=kat["beschreibung"],
+        ):
+            selected = name
 
 st.divider()
 
 # ── Video generieren ──
 
-if st.button("Video erstellen", type="primary", disabled=not thema, use_container_width=True):
+if selected:
+    kat = KATEGORIEN[selected]
+    thema = kat["thema"]
+    farbschema = kat["color_scheme"]
+    dauer = 10
 
     anthropic_key = get_secret("ANTHROPIC_API_KEY")
     elevenlabs_key = get_secret("ELEVENLABS_API_KEY")
@@ -93,10 +137,10 @@ if st.button("Video erstellen", type="primary", disabled=not thema, use_containe
         st.stop()
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="hypnose_"))
-    safe_name = thema.replace(" ", "_").replace("/", "-")
+    safe_name = selected.replace(" ", "_").replace("/", "-")
 
     progress = st.progress(0)
-    status = st.status("Video wird erstellt...", expanded=True)
+    status = st.status(f"{kat['icon']} {selected} wird erstellt...", expanded=True)
 
     try:
         start_time = time.time()
@@ -153,7 +197,7 @@ if st.button("Video erstellen", type="primary", disabled=not thema, use_containe
         visual_path = str(tmp_dir / "visual_loop.mp4")
         generate_visual_loop(
             output_path=visual_path,
-            loop_duration=10.0,
+            loop_duration=audio_duration_sec,
             width=1280,
             height=720,
             fps=24,
@@ -182,7 +226,7 @@ if st.button("Video erstellen", type="primary", disabled=not thema, use_containe
 
         st.session_state["video_bytes"] = video_bytes
         st.session_state["video_name"] = f"{safe_name}.mp4"
-        st.session_state["video_title"] = result.get("title", thema)
+        st.session_state["video_title"] = result.get("title", selected)
         st.session_state["video_description"] = result.get("description", "")
         st.session_state["video_tags"] = result.get("tags", [])
 

@@ -1,4 +1,4 @@
-"""Generiert Hypnose-Visuals mit DALL-E und Ken-Burns-Effekt."""
+"""Generiert Hypnose-Visuals mit DALL-E und nahtlosem Ken-Burns-Effekt."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import os
 import math
 import requests
 import numpy as np
-from PIL import Image, ImageFilter
+from PIL import Image
 from moviepy import VideoClip
 from openai import OpenAI
 
@@ -68,7 +68,7 @@ def _generate_dalle_image(
     return output_path
 
 
-def _ken_burns_frame(
+def _seamless_ken_burns_frame(
     img_array: np.ndarray,
     t: float,
     duration: float,
@@ -76,42 +76,67 @@ def _ken_burns_frame(
     target_h: int = 1080,
 ) -> np.ndarray:
     """
-    Erstellt einen Frame mit sanftem Ken-Burns-Effekt:
-    - Langsamer Zoom (rein und raus)
-    - Leichte Rotation
-    - Sanfte Positionsverschiebung
+    Erstellt einen Frame mit nahtlosem, fliessend durchgehendem Ken-Burns-Effekt.
+
+    Verwendet mehrere ueberlagerte Sinuswellen mit unterschiedlichen Frequenzen
+    (inkommensurabel), sodass sich das Muster nie exakt wiederholt und kein
+    Loop-Punkt erkennbar ist.
     """
     src_h, src_w = img_array.shape[:2]
 
-    # Zoom: langsam zwischen 1.0 und 1.15 pendeln
-    zoom_cycle = math.sin(2 * math.pi * t / duration) * 0.5 + 0.5  # 0-1
-    zoom = 1.0 + 0.15 * zoom_cycle
+    # Normalisierte Zeit (0 bis 1 ueber gesamte Dauer)
+    nt = t / duration
 
-    # Leichte Position-Drift
-    drift_x = math.sin(2 * math.pi * t / (duration * 1.3)) * 0.03  # -3% bis +3%
-    drift_y = math.cos(2 * math.pi * t / (duration * 0.9)) * 0.02
+    # === Zoom: ueberlagerte Wellen fuer organisches Gefuehl ===
+    # Goldener Schnitt als Frequenz-Verhaeltnis -> nie periodisch
+    phi = (1 + math.sqrt(5)) / 2  # 1.618...
 
-    # Crop-Bereich berechnen
+    zoom_wave1 = math.sin(2 * math.pi * nt * 1.0) * 0.04
+    zoom_wave2 = math.sin(2 * math.pi * nt * phi) * 0.03
+    zoom_wave3 = math.sin(2 * math.pi * nt * (phi * phi)) * 0.02
+    zoom = 1.0 + 0.05 + zoom_wave1 + zoom_wave2 + zoom_wave3
+    # Zoom bewegt sich sanft zwischen ca. 0.96 und 1.14
+
+    # === Position-Drift: langsame, organische Bewegung ===
+    drift_x = (
+        math.sin(2 * math.pi * nt * 0.7) * 0.025
+        + math.sin(2 * math.pi * nt * 1.1 * phi) * 0.015
+        + math.sin(2 * math.pi * nt * 2.3) * 0.01
+    )
+    drift_y = (
+        math.cos(2 * math.pi * nt * 0.5) * 0.02
+        + math.cos(2 * math.pi * nt * 0.9 * phi) * 0.012
+        + math.cos(2 * math.pi * nt * 1.7) * 0.008
+    )
+
+    # === Crop berechnen ===
     crop_w = int(src_w / zoom)
     crop_h = int(src_h / zoom)
 
-    # Zentrum + Drift
-    center_x = src_w // 2 + int(drift_x * src_w)
-    center_y = src_h // 2 + int(drift_y * src_h)
+    # Sicherstellen dass crop nicht groesser als Bild
+    crop_w = min(crop_w, src_w)
+    crop_h = min(crop_h, src_h)
 
-    # Crop-Koordinaten (mit Bounds-Check)
+    # Zentrum + Drift (begrenzt auf sichere Raender)
+    max_drift_x = (src_w - crop_w) // 2
+    max_drift_y = (src_h - crop_h) // 2
+
+    center_x = src_w // 2 + int(drift_x * max_drift_x * 2) if max_drift_x > 0 else src_w // 2
+    center_y = src_h // 2 + int(drift_y * max_drift_y * 2) if max_drift_y > 0 else src_h // 2
+
+    # Crop-Koordinaten
     x1 = max(0, center_x - crop_w // 2)
     y1 = max(0, center_y - crop_h // 2)
     x2 = min(src_w, x1 + crop_w)
     y2 = min(src_h, y1 + crop_h)
 
-    # Falls am Rand: zurückschieben
+    # Bounds-Check
     if x2 - x1 < crop_w:
         x1 = max(0, x2 - crop_w)
     if y2 - y1 < crop_h:
         y1 = max(0, y2 - crop_h)
 
-    # Croppen und auf Zielgröße skalieren
+    # Croppen und auf Zielgroesse skalieren
     cropped = img_array[y1:y2, x1:x2]
     pil_img = Image.fromarray(cropped)
     pil_img = pil_img.resize((target_w, target_h), Image.LANCZOS)
@@ -124,19 +149,18 @@ def generate_visual_loop(
     loop_duration: float = 10.0,
     width: int = 1920,
     height: int = 1080,
-    fps: int = 30,
+    fps: int = 24,
     style: str = "spiral",
     color_scheme: str = "purple_blue",
     openai_api_key: str = None,
     image_path: str = None,
 ) -> str:
     """
-    Generiert ein Visual-Loop-Video:
+    Generiert ein Visual-Video ueber die gesamte Dauer:
     1. DALL-E erstellt ein hypnotisches Bild
-    2. Ken-Burns-Effekt (Zoom + Drift) macht daraus ein Video
-
-    Args:
-        image_path: Optionaler Pfad zu einem vorhandenen Bild (überspringt DALL-E)
+    2. Nahtloser Ken-Burns-Effekt (Zoom + Drift) ueber die gesamte Laenge
+       - Kein erkennbarer Loop-Punkt
+       - Fliessende, organische Bewegung
     """
     # Bild generieren oder laden
     if image_path and os.path.exists(image_path):
@@ -146,7 +170,6 @@ def generate_visual_loop(
         bg_image_path = output_path.replace(".mp4", "_bg.png")
         prompt = IMAGE_PROMPTS.get(color_scheme, IMAGE_PROMPTS["purple_blue"])
 
-        # Thema-spezifischen Prompt anpassen falls style-Info vorhanden
         if style and style != "spiral":
             prompt = prompt.replace("mandala", style)
 
@@ -159,10 +182,15 @@ def generate_visual_loop(
     # Bild laden
     bg_image = np.array(Image.open(bg_image_path).convert("RGB"))
 
-    def make_frame(t):
-        return _ken_burns_frame(bg_image, t, loop_duration, width, height)
+    total_duration = loop_duration
+    print(f"  Visual-Dauer: {total_duration:.1f}s ({total_duration / 60:.1f} Min)")
 
-    clip = VideoClip(make_frame, duration=loop_duration)
+    def make_frame(t):
+        return _seamless_ken_burns_frame(
+            bg_image, t, total_duration, width, height
+        )
+
+    clip = VideoClip(make_frame, duration=total_duration)
     clip = clip.with_fps(fps)
 
     clip.write_videofile(
@@ -174,14 +202,14 @@ def generate_visual_loop(
         logger="bar",
     )
 
-    print(f"  Visual Loop generiert: {loop_duration}s ({output_path})")
+    print(f"  Visual generiert: {total_duration:.1f}s ({output_path})")
     return output_path
 
 
 if __name__ == "__main__":
     generate_visual_loop(
         "test_visual.mp4",
-        loop_duration=5,
+        loop_duration=30,
         color_scheme="purple_blue",
         fps=24,
         width=960,
