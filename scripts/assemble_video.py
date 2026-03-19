@@ -1,12 +1,11 @@
-"""Assembliert das finale Hypnose-Video aus Audio, Musik und Visual (ohne FFmpeg)."""
+"""Assembliert das finale Hypnose-Video aus Audio, Musik und Visual."""
 
 from __future__ import annotations
 
 import os
-import wave
+import subprocess
 import numpy as np
 from scipy.io import wavfile
-from moviepy import AudioFileClip, VideoFileClip, concatenate_videoclips
 
 
 def mix_audio(
@@ -17,7 +16,7 @@ def mix_audio(
     fade_in_sec: float = 5.0,
     fade_out_sec: float = 10.0,
 ) -> str:
-    """Mischt Stimme und Hintergrundmusik mit numpy (kein pydub/ffmpeg)."""
+    """Mischt Stimme und Hintergrundmusik mit numpy."""
 
     # WAV-Dateien laden
     voice_sr, voice_data = wavfile.read(voice_path)
@@ -44,7 +43,6 @@ def mix_audio(
         music_left = np.interp(x_new, x_old, music_data[:, 0])
         music_right = np.interp(x_new, x_old, music_data[:, 1])
         music_data = np.column_stack([music_left, music_right])
-        music_sr = voice_sr
 
     # Musik auf Stimm-Laenge bringen (loopen falls noetig)
     voice_len = len(voice_data)
@@ -100,50 +98,35 @@ def assemble_video(
     resolution: tuple = (1920, 1080),
 ) -> str:
     """
-    Erstellt das finale Video: loopt das Visual und legt Audio darunter.
-    Verwendet moviepy statt FFmpeg CLI.
+    Erstellt das finale Video: kombiniert Visual und Audio mit ffmpeg.
     """
-    # Audio laden
-    audio_clip = AudioFileClip(audio_path)
-    audio_duration = audio_clip.duration
-    print(f"  Audio-Dauer: {audio_duration:.1f}s")
-
-    # Visual laden
-    visual_clip = VideoFileClip(visual_loop_path)
-    visual_duration = visual_clip.duration
-
-    # Visual loopen bis es die Audio-Laenge erreicht
-    if visual_duration < audio_duration:
-        num_loops = int(audio_duration / visual_duration) + 1
-        clips = [visual_clip] * num_loops
-        visual_clip = concatenate_videoclips(clips)
-
-    # Auf Audio-Laenge schneiden
-    visual_clip = visual_clip.subclipped(0, audio_duration)
-
-    # Audio drauflegen
-    final = visual_clip.with_audio(audio_clip)
-
-    # Video schreiben
-    print(f"  Video wird assembliert...")
-    final.write_videofile(
+    # FFmpeg: Video + Audio zusammenfuegen
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", visual_loop_path,
+        "-i", audio_path,
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-c:v", "libx264",
+        "-preset", "medium",
+        "-crf", "20",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        "-shortest",
         output_path,
-        fps=30,
-        codec="libx264",
-        audio_codec="aac",
-        bitrate="5000k",
-        preset="medium",
-        logger="bar",
-    )
+    ]
 
-    # Aufraeumen
-    audio_clip.close()
-    visual_clip.close()
-    final.close()
+    print(f"  Video wird assembliert...")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"  FFmpeg stderr: {result.stderr[:500]}")
+        raise RuntimeError(f"FFmpeg Fehler: {result.stderr[:200]}")
 
     # Dateigroesse
     size_mb = os.path.getsize(output_path) / (1024 * 1024)
-    print(f"  Video fertig: {audio_duration:.0f}s, {size_mb:.1f} MB ({output_path})")
+    print(f"  Video fertig: {size_mb:.1f} MB ({output_path})")
 
     return output_path
 

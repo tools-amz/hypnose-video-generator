@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import os
 import math
+import subprocess
 import requests
 import numpy as np
 from PIL import Image
-from moviepy import VideoClip
 from openai import OpenAI
 
 
@@ -59,7 +59,6 @@ def _generate_dalle_image(
 
     image_url = response.data[0].url
 
-    # Bild herunterladen
     img_data = requests.get(image_url).content
     with open(output_path, "wb") as f:
         f.write(img_data)
@@ -76,28 +75,20 @@ def _seamless_ken_burns_frame(
     target_h: int = 1080,
 ) -> np.ndarray:
     """
-    Erstellt einen Frame mit nahtlosem, fliessend durchgehendem Ken-Burns-Effekt.
-
-    Verwendet mehrere ueberlagerte Sinuswellen mit unterschiedlichen Frequenzen
-    (inkommensurabel), sodass sich das Muster nie exakt wiederholt und kein
-    Loop-Punkt erkennbar ist.
+    Erstellt einen Frame mit nahtlosem Ken-Burns-Effekt.
+    Verwendet ueberlagerte Sinuswellen mit dem Goldenen Schnitt
+    als Frequenzverhaeltnis -> nie periodisch, kein Loop erkennbar.
     """
     src_h, src_w = img_array.shape[:2]
+    nt = t / duration if duration > 0 else 0
 
-    # Normalisierte Zeit (0 bis 1 ueber gesamte Dauer)
-    nt = t / duration
-
-    # === Zoom: ueberlagerte Wellen fuer organisches Gefuehl ===
-    # Goldener Schnitt als Frequenz-Verhaeltnis -> nie periodisch
-    phi = (1 + math.sqrt(5)) / 2  # 1.618...
+    phi = (1 + math.sqrt(5)) / 2
 
     zoom_wave1 = math.sin(2 * math.pi * nt * 1.0) * 0.04
     zoom_wave2 = math.sin(2 * math.pi * nt * phi) * 0.03
     zoom_wave3 = math.sin(2 * math.pi * nt * (phi * phi)) * 0.02
     zoom = 1.0 + 0.05 + zoom_wave1 + zoom_wave2 + zoom_wave3
-    # Zoom bewegt sich sanft zwischen ca. 0.96 und 1.14
 
-    # === Position-Drift: langsame, organische Bewegung ===
     drift_x = (
         math.sin(2 * math.pi * nt * 0.7) * 0.025
         + math.sin(2 * math.pi * nt * 1.1 * phi) * 0.015
@@ -109,34 +100,25 @@ def _seamless_ken_burns_frame(
         + math.cos(2 * math.pi * nt * 1.7) * 0.008
     )
 
-    # === Crop berechnen ===
-    crop_w = int(src_w / zoom)
-    crop_h = int(src_h / zoom)
+    crop_w = min(int(src_w / zoom), src_w)
+    crop_h = min(int(src_h / zoom), src_h)
 
-    # Sicherstellen dass crop nicht groesser als Bild
-    crop_w = min(crop_w, src_w)
-    crop_h = min(crop_h, src_h)
-
-    # Zentrum + Drift (begrenzt auf sichere Raender)
     max_drift_x = (src_w - crop_w) // 2
     max_drift_y = (src_h - crop_h) // 2
 
-    center_x = src_w // 2 + int(drift_x * max_drift_x * 2) if max_drift_x > 0 else src_w // 2
-    center_y = src_h // 2 + int(drift_y * max_drift_y * 2) if max_drift_y > 0 else src_h // 2
+    center_x = src_w // 2 + (int(drift_x * max_drift_x * 2) if max_drift_x > 0 else 0)
+    center_y = src_h // 2 + (int(drift_y * max_drift_y * 2) if max_drift_y > 0 else 0)
 
-    # Crop-Koordinaten
     x1 = max(0, center_x - crop_w // 2)
     y1 = max(0, center_y - crop_h // 2)
     x2 = min(src_w, x1 + crop_w)
     y2 = min(src_h, y1 + crop_h)
 
-    # Bounds-Check
     if x2 - x1 < crop_w:
         x1 = max(0, x2 - crop_w)
     if y2 - y1 < crop_h:
         y1 = max(0, y2 - crop_h)
 
-    # Croppen und auf Zielgroesse skalieren
     cropped = img_array[y1:y2, x1:x2]
     pil_img = Image.fromarray(cropped)
     pil_img = pil_img.resize((target_w, target_h), Image.LANCZOS)
@@ -156,11 +138,8 @@ def generate_visual_loop(
     image_path: str = None,
 ) -> str:
     """
-    Generiert ein Visual-Video ueber die gesamte Dauer:
-    1. DALL-E erstellt ein hypnotisches Bild
-    2. Nahtloser Ken-Burns-Effekt (Zoom + Drift) ueber die gesamte Laenge
-       - Kein erkennbarer Loop-Punkt
-       - Fliessende, organische Bewegung
+    Generiert ein Visual-Video ueber die gesamte Dauer.
+    Nutzt ffmpeg pipe statt moviepy fuer maximale Kompatibilitaet.
     """
     # Bild generieren oder laden
     if image_path and os.path.exists(image_path):
@@ -183,26 +162,51 @@ def generate_visual_loop(
     bg_image = np.array(Image.open(bg_image_path).convert("RGB"))
 
     total_duration = loop_duration
-    print(f"  Visual-Dauer: {total_duration:.1f}s ({total_duration / 60:.1f} Min)")
+    total_frames = int(total_duration * fps)
+    print(f"  Visual: {total_duration:.1f}s, {total_frames} Frames @ {fps}fps")
 
-    def make_frame(t):
-        return _seamless_ken_burns_frame(
+    # FFmpeg-Prozess starten: raw RGB frames via pipe -> H.264 MP4
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "rawvideo",
+        "-vcodec", "rawvideo",
+        "-s", f"{width}x{height}",
+        "-pix_fmt", "rgb24",
+        "-r", str(fps),
+        "-i", "-",
+        "-c:v", "libx264",
+        "-preset", "medium",
+        "-crf", "20",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        output_path,
+    ]
+
+    process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    # Frames generieren und an ffmpeg pipen
+    for frame_idx in range(total_frames):
+        t = frame_idx / fps
+        frame = _seamless_ken_burns_frame(
             bg_image, t, total_duration, width, height
         )
+        process.stdin.write(frame.astype(np.uint8).tobytes())
 
-    clip = VideoClip(make_frame, duration=total_duration)
-    clip = clip.with_fps(fps)
+        # Fortschritt alle 10%
+        if frame_idx > 0 and frame_idx % max(1, total_frames // 10) == 0:
+            pct = int(100 * frame_idx / total_frames)
+            print(f"  Visual: {pct}% ({frame_idx}/{total_frames} Frames)")
 
-    clip.write_videofile(
-        output_path,
-        fps=fps,
-        codec="libx264",
-        preset="medium",
-        bitrate="5000k",
-        logger="bar",
-    )
+    process.stdin.close()
+    stderr = process.stderr.read().decode()
+    process.wait()
 
-    print(f"  Visual generiert: {total_duration:.1f}s ({output_path})")
+    if process.returncode != 0:
+        print(f"  FFmpeg stderr: {stderr[:500]}")
+        raise RuntimeError(f"FFmpeg Visual Fehler: {stderr[:200]}")
+
+    size_mb = os.path.getsize(output_path) / (1024 * 1024)
+    print(f"  Visual generiert: {total_duration:.1f}s, {size_mb:.1f} MB ({output_path})")
     return output_path
 
 
