@@ -91,7 +91,7 @@ def generate_audio(
     script: str,
     output_path: str,
     api_key: str = None,
-    voice_id: str = "onwK4e9ZLuTAKqWW03F9",
+    voice_id: str = "Kjeny11gi7eRow36ExYY",
     model_id: str = "eleven_multilingual_v2",
     stability: float = 0.75,
     similarity_boost: float = 0.75,

@@ -23,7 +23,7 @@ youtube:
 
 # TTS Einstellungen
 tts:
-  voice_id: "onwK4e9ZLuTAKqWW03F9"  # ElevenLabs deutsche Stimme (Daniel)
+  voice_id: "Kjeny11gi7eRow36ExYY"  # ElevenLabs Elias – Calm & Deep Meditation Voice
   model_id: "eleven_multilingual_v2"
   stability: 0.75
   similarity_boost: 0.75
